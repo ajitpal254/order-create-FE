@@ -1,0 +1,16 @@
+# Netlify Build and Deployment Configuration for Vite SPA
+[build]
+  publish = "dist"
+  command = "npm run build"
+
+# Cache headers for static assets
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# SPA Fallback rule so React Router handles deep routes (/order-creator, /catalog, /admin, etc.)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
