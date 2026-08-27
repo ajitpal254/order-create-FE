@@ -1,4 +1,5 @@
-const API_BASE = '/api';
+const envApiUrl = import.meta.env.VITE_API_URL;
+const API_BASE = (envApiUrl && envApiUrl.trim() !== '') ? envApiUrl.replace(/\/$/, '') : '/api';
 
 // Helper to make API requests with Authorization header
 export async function apiRequest(endpoint, options = {}) {
