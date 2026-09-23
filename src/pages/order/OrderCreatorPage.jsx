@@ -149,8 +149,8 @@ export const OrderCreatorPage = () => {
     setCustomMarking('');
   };
 
-  // Submit Completed Order
-  const handleFinalSubmit = async () => {
+  // Submit Completed Order or RFQ Quotation
+  const handleFinalSubmit = async (orderType = 'Order') => {
     if (!isAuthenticated) {
       navigate('/login', { state: { from: location } });
       return;
@@ -165,7 +165,7 @@ export const OrderCreatorPage = () => {
     setErrorMessage(null);
 
     try {
-      const res = await submitOrder();
+      const res = await submitOrder(orderType);
       if (res.success && res.order) {
         confetti({
           particleCount: 90,
@@ -175,7 +175,7 @@ export const OrderCreatorPage = () => {
         setOrderSuccessModal(res.order);
       }
     } catch (err) {
-      setErrorMessage(err.message || 'Failed to submit order.');
+      setErrorMessage(err.message || `Failed to submit ${orderType.toLowerCase()}.`);
     } finally {
       setSubmitting(false);
     }
@@ -653,7 +653,36 @@ export const OrderCreatorPage = () => {
                   </div>
                 </div>
 
-                {/* Shipping Marks & Special Instructions */}
+                {/* Incoterm, Currency, Shipping Marks & Special Instructions */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.25rem' }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">Trade Incoterm</label>
+                    <select
+                      className="form-control form-select"
+                      value={orderMetadata.incoterm || 'FOB'}
+                      onChange={(e) => setOrderMetadata({ ...orderMetadata, incoterm: e.target.value })}
+                    >
+                      <option value="FOB">FOB (Free On Board — Port of Origin)</option>
+                      <option value="CIF">CIF (Cost, Insurance & Freight — Port of Destination)</option>
+                      <option value="EXW">EXW (Ex Works — Factory Floor Pickup)</option>
+                    </select>
+                  </div>
+
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">Invoice Currency</label>
+                    <select
+                      className="form-control form-select"
+                      value={orderMetadata.currency || 'USD'}
+                      onChange={(e) => setOrderMetadata({ ...orderMetadata, currency: e.target.value })}
+                    >
+                      <option value="USD">USD ($ United States Dollar)</option>
+                      <option value="EUR">EUR (€ Euro)</option>
+                      <option value="GBP">GBP (£ British Pound)</option>
+                      <option value="AUD">AUD ($ Australian Dollar)</option>
+                    </select>
+                  </div>
+                </div>
+
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
                   <div className="form-group" style={{ margin: 0 }}>
                     <label className="form-label">Shipping Marks (For Outer Master Cartons)</label>
@@ -696,6 +725,11 @@ export const OrderCreatorPage = () => {
                     {isAuthenticated ? (
                       <span>
                         Submitting as: <b style={{ color: '#FFFFFF' }}>{user.customerName}</b> ({user.businessName}, {user.country})
+                        {user.distributorTier && user.distributorTier !== 'Standard' && (
+                          <span className="badge badge-purple" style={{ marginLeft: '0.5rem' }}>
+                            {user.distributorTier} Tier
+                          </span>
+                        )}
                       </span>
                     ) : (
                       <span>
@@ -704,16 +738,29 @@ export const OrderCreatorPage = () => {
                     )}
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={handleFinalSubmit}
-                    disabled={submitting || cartItems.length === 0}
-                    className="btn btn-primary btn-lg"
-                    style={{ padding: '0.85rem 2rem' }}
-                  >
-                    <Sparkles size={18} />
-                    <span>{submitting ? 'Submitting Order...' : 'Submit Order to H.A. Overseas'}</span>
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={() => handleFinalSubmit('Quote')}
+                      disabled={submitting || cartItems.length === 0}
+                      className="btn btn-secondary btn-lg"
+                      title="Request formal price quotation before binding commitment"
+                    >
+                      <FileDown size={18} />
+                      <span>Request RFQ Quote</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleFinalSubmit('Order')}
+                      disabled={submitting || cartItems.length === 0}
+                      className="btn btn-primary btn-lg"
+                      style={{ padding: '0.85rem 2rem' }}
+                    >
+                      <Sparkles size={18} />
+                      <span>{submitting ? 'Submitting Order...' : 'Submit Confirmed Order'}</span>
+                    </button>
+                  </div>
                 </div>
               </>
             )}

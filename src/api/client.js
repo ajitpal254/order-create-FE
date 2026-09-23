@@ -1,12 +1,26 @@
 const envApiUrl = import.meta.env.VITE_API_URL;
 const API_BASE = (envApiUrl && envApiUrl.trim() !== '') ? envApiUrl.replace(/\/$/, '') : '/api';
 
-// Helper to make API requests with Authorization header
+let isRefreshing = false;
+let failedQueue = [];
+
+const processQueue = (error, token = null) => {
+  failedQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  failedQueue = [];
+};
+
+// Helper to make API requests with Authorization header and automatic token refresh
 export async function apiRequest(endpoint, options = {}) {
-  const token = localStorage.getItem('hao_token');
+  let token = localStorage.getItem('hao_token');
   const headers = { ...options.headers };
 
-  if (token) {
+  if (token && !headers['Authorization']) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
@@ -15,10 +29,57 @@ export async function apiRequest(endpoint, options = {}) {
     headers['Content-Type'] = 'application/json';
   }
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
+  const fetchOptions = {
     ...options,
     headers,
-  });
+    credentials: 'include', // Send httpOnly cookies (refresh token)
+  };
+
+  let response = await fetch(`${API_BASE}${endpoint}`, fetchOptions);
+
+  // Handle 401: Token expired -> attempt refresh (except on auth endpoints to prevent loops)
+  if (response.status === 401 && !endpoint.startsWith('/auth/login') && !endpoint.startsWith('/auth/refresh') && !endpoint.startsWith('/auth/signup')) {
+    if (isRefreshing) {
+      try {
+        const newToken = await new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject });
+        });
+        headers['Authorization'] = `Bearer ${newToken}`;
+        return await fetch(`${API_BASE}${endpoint}`, { ...fetchOptions, headers }).then((res) => res.json());
+      } catch (err) {
+        throw err;
+      }
+    }
+
+    isRefreshing = true;
+
+    try {
+      const refreshRes = await fetch(`${API_BASE}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      });
+
+      if (refreshRes.ok) {
+        const refreshData = await refreshRes.json();
+        const newToken = refreshData.accessToken || refreshData.token;
+        if (newToken) {
+          localStorage.setItem('hao_token', newToken);
+          processQueue(null, newToken);
+          headers['Authorization'] = `Bearer ${newToken}`;
+          response = await fetch(`${API_BASE}${endpoint}`, { ...fetchOptions, headers });
+        }
+      } else {
+        processQueue(new Error('Session expired'), null);
+        localStorage.removeItem('hao_token');
+      }
+    } catch (refreshErr) {
+      processQueue(refreshErr, null);
+      localStorage.removeItem('hao_token');
+    } finally {
+      isRefreshing = false;
+    }
+  }
 
   const isJson = response.headers.get('content-type')?.includes('application/json');
   const data = isJson ? await response.json() : await response.text();
@@ -51,6 +112,14 @@ export const authApi = {
       method: 'POST',
       body: JSON.stringify(googleData),
     }),
+  refreshToken: () =>
+    apiRequest('/auth/refresh', {
+      method: 'POST',
+    }),
+  logout: () =>
+    apiRequest('/auth/logout', {
+      method: 'POST',
+    }),
   forgotPassword: (email) =>
     apiRequest('/auth/forgot-password', {
       method: 'POST',
@@ -71,27 +140,22 @@ export const authApi = {
 
 export const attributeApi = {
   getAll: () => apiRequest('/attributes'),
-  // Finishes
   getFinishes: () => apiRequest('/attributes/finishes'),
   addFinish: (data) => apiRequest('/attributes/finishes', { method: 'POST', body: JSON.stringify(data) }),
   updateFinish: (id, data) => apiRequest(`/attributes/finishes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteFinish: (id) => apiRequest(`/attributes/finishes/${id}`, { method: 'DELETE' }),
-  // Colors
   getColors: () => apiRequest('/attributes/colors'),
   addColor: (data) => apiRequest('/attributes/colors', { method: 'POST', body: JSON.stringify(data) }),
   updateColor: (id, data) => apiRequest(`/attributes/colors/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteColor: (id) => apiRequest(`/attributes/colors/${id}`, { method: 'DELETE' }),
-  // Brands
   getBrands: () => apiRequest('/attributes/brands'),
   addBrand: (data) => apiRequest('/attributes/brands', { method: 'POST', body: JSON.stringify(data) }),
   updateBrand: (id, data) => apiRequest(`/attributes/brands/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteBrand: (id) => apiRequest(`/attributes/brands/${id}`, { method: 'DELETE' }),
-  // Sizes
   getSizes: () => apiRequest('/attributes/sizes'),
   addSize: (data) => apiRequest('/attributes/sizes', { method: 'POST', body: JSON.stringify(data) }),
   updateSize: (id, data) => apiRequest(`/attributes/sizes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteSize: (id) => apiRequest(`/attributes/sizes/${id}`, { method: 'DELETE' }),
-  // Categories
   getCategories: () => apiRequest('/attributes/categories'),
   addCategory: (data) => apiRequest('/attributes/categories', { method: 'POST', body: JSON.stringify(data) }),
   updateCategory: (id, data) => apiRequest(`/attributes/categories/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -121,12 +185,22 @@ export const productApi = {
 };
 
 export const orderApi = {
-  createOrder: (orderData) =>
-    apiRequest('/orders', {
+  createOrder: (orderData, idempotencyKey = null) => {
+    const headers = {};
+    if (idempotencyKey) {
+      headers['Idempotency-Key'] = idempotencyKey;
+    }
+    return apiRequest('/orders', {
       method: 'POST',
+      headers,
       body: JSON.stringify(orderData),
-    }),
-  getMyOrders: () => apiRequest('/orders/my-orders'),
+    });
+  },
+  getActiveDraft: () => apiRequest('/orders/draft'),
+  getMyOrders: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiRequest(`/orders/my-orders${query ? `?${query}` : ''}`);
+  },
   getOrderById: (id) => apiRequest(`/orders/${id}`),
   getAllOrders: (params = {}) => {
     const query = new URLSearchParams(params).toString();
@@ -137,7 +211,12 @@ export const orderApi = {
       method: 'PATCH',
       body: JSON.stringify(payload),
     }),
-  getStats: () => apiRequest('/orders/stats/summary'),
+  convertQuote: (id) =>
+    apiRequest(`/orders/${id}/convert-quote`, {
+      method: 'POST',
+    }),
+  getBuyerAnalytics: () => apiRequest('/orders/buyer-analytics'),
+  getStats: () => apiRequest('/orders/stats/overview'),
   getPdfUrl: (id) => {
     const token = localStorage.getItem('hao_token');
     return `/api/orders/${id}/pdf${token ? `?token=${encodeURIComponent(token)}` : ''}`;
@@ -148,6 +227,7 @@ export const orderApi = {
       headers: {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
+      credentials: 'include',
     });
     if (!response.ok) {
       const errJson = await response.json().catch(() => null);
@@ -175,3 +255,58 @@ export const userApi = {
       method: 'PATCH',
     }),
 };
+
+export const invoiceApi = {
+  getInvoices: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiRequest(`/invoices${query ? `?${query}` : ''}`);
+  },
+  getInvoiceById: (id) => apiRequest(`/invoices/${id}`),
+  createInvoice: (data) =>
+    apiRequest('/invoices', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateInvoice: (id, data) =>
+    apiRequest(`/invoices/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  recordPayment: (id, paymentData) =>
+    apiRequest(`/invoices/${id}/payments`, {
+      method: 'POST',
+      body: JSON.stringify(paymentData),
+    }),
+  voidInvoice: (id, reason) =>
+    apiRequest(`/invoices/${id}/void`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+  getPdfUrl: (id) => {
+    const token = localStorage.getItem('hao_token');
+    return `/api/invoices/${id}/pdf${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+  },
+  downloadPdf: async (id, invoiceNumber = 'Document') => {
+    const token = localStorage.getItem('hao_token');
+    const response = await fetch(`/api/invoices/${id}/pdf`, {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      const errJson = await response.json().catch(() => null);
+      throw new Error(errJson?.message || 'Failed to download Invoice PDF');
+    }
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `HAO_Invoice_${invoiceNumber}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  },
+};
+

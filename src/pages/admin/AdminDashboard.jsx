@@ -3,7 +3,8 @@ import {
   orderApi, 
   productApi, 
   attributeApi, 
-  userApi 
+  userApi,
+  invoiceApi
 } from '../../api/client';
 import { StatusBadge } from '../../components/StatusBadge';
 import { Modal } from '../../components/Modal';
@@ -25,14 +26,46 @@ import {
   Boxes, 
   AlertCircle,
   TrendingUp,
-  X
+  X,
+  Receipt,
+  FileText,
+  CreditCard,
+  Ban,
+  CheckCircle2
 } from 'lucide-react';
 
 export const AdminDashboard = () => {
-  const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'products' | 'attributes' | 'customers'
+  const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'invoices' | 'products' | 'attributes' | 'customers'
 
   // Stats
   const [stats, setStats] = useState(null);
+
+  // Invoices Tab State
+  const [invoices, setInvoices] = useState([]);
+  const [invoiceFilter, setInvoiceFilter] = useState('All');
+  const [invoiceSearch, setInvoiceSearch] = useState('');
+  const [selectedInvoiceForPayment, setSelectedInvoiceForPayment] = useState(null);
+  const [paymentForm, setPaymentForm] = useState({
+    amount: '',
+    paymentMethod: 'Wire Transfer',
+    referenceNumber: '',
+    notes: '',
+  });
+  const [selectedInvoiceForVoid, setSelectedInvoiceForVoid] = useState(null);
+  const [voidReason, setVoidReason] = useState('');
+  const [isNewInvoiceModalOpen, setIsNewInvoiceModalOpen] = useState(false);
+  const [newInvoiceForm, setNewInvoiceForm] = useState({
+    customerName: '',
+    businessName: '',
+    country: '',
+    email: '',
+    currency: 'USD',
+    incoterm: 'FOB',
+    docType: 'commercial_invoice',
+    items: [{ productName: '', quantity: 1, unitPrice: 0, hsnCode: '8205.59', unit: 'PCS' }],
+  });
+  const [downloadingInvoicePdfId, setDownloadingInvoicePdfId] = useState(null);
+  const [generatingInvoiceOrderId, setGeneratingInvoiceOrderId] = useState(null);
 
   // Orders Tab State
   const [orders, setOrders] = useState([]);
@@ -41,6 +74,10 @@ export const AdminDashboard = () => {
   const [selectedOrderForStatus, setSelectedOrderForStatus] = useState(null);
   const [newStatus, setNewStatus] = useState('Confirmed');
   const [statusNote, setStatusNote] = useState('');
+  const [trackingNumber, setTrackingNumber] = useState('');
+  const [carrierName, setCarrierName] = useState('DHL Express');
+  const [cancellationReason, setCancellationReason] = useState('');
+
 
   // Products Tab State
   const [products, setProducts] = useState([]);
@@ -104,9 +141,10 @@ export const AdminDashboard = () => {
   const fetchAllData = async () => {
     setLoading(true);
     try {
-      const [statsRes, ordersRes, productsRes, attrRes, usersRes] = await Promise.all([
+      const [statsRes, ordersRes, invoicesRes, productsRes, attrRes, usersRes] = await Promise.all([
         orderApi.getStats().catch(() => ({ success: false })),
         orderApi.getAllOrders(),
+        invoiceApi.getInvoices().catch(() => ({ success: false, data: [] })),
         productApi.getProducts({ limit: 200 }),
         attributeApi.getAll(),
         userApi.getUsers().catch(() => ({ success: false, data: [] })),
@@ -114,6 +152,7 @@ export const AdminDashboard = () => {
 
       if (statsRes.success) setStats(statsRes.stats);
       if (ordersRes.success) setOrders(ordersRes.data);
+      if (invoicesRes.success) setInvoices(invoicesRes.data);
       if (productsRes.success) setProducts(productsRes.data);
       if (attrRes.success) setAttributes(attrRes.data);
       if (usersRes.success) setCustomers(usersRes.data);
@@ -128,18 +167,149 @@ export const AdminDashboard = () => {
     fetchAllData();
   }, []);
 
+  // Invoice Handlers
+  const handleGenerateInvoiceFromOrder = async (order) => {
+    try {
+      setGeneratingInvoiceOrderId(order._id);
+      const res = await invoiceApi.createInvoice({ orderId: order._id });
+      if (res.success) {
+        showToast(`Invoice #${res.invoice.invoiceNumber} created for Order #${order.orderNumber}`);
+        await fetchAllData();
+      }
+    } catch (err) {
+      alert('Failed to generate invoice: ' + err.message);
+    } finally {
+      setGeneratingInvoiceOrderId(null);
+    }
+  };
+
+  const handleDownloadInvoicePdf = async (invoiceId, invoiceNumber) => {
+    try {
+      setDownloadingInvoicePdfId(invoiceId);
+      await invoiceApi.downloadPdf(invoiceId, invoiceNumber);
+    } catch (err) {
+      alert('Error downloading Invoice PDF: ' + err.message);
+    } finally {
+      setDownloadingInvoicePdfId(null);
+    }
+  };
+
+  const handleRecordPaymentSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedInvoiceForPayment) return;
+    try {
+      const res = await invoiceApi.recordPayment(selectedInvoiceForPayment._id, paymentForm);
+      if (res.success) {
+        showToast(`Payment recorded on #${selectedInvoiceForPayment.invoiceNumber}`);
+        setSelectedInvoiceForPayment(null);
+        setPaymentForm({
+          amount: '',
+          paymentMethod: 'Wire Transfer',
+          referenceNumber: '',
+          notes: '',
+        });
+        await fetchAllData();
+      }
+    } catch (err) {
+      alert('Error recording payment: ' + err.message);
+    }
+  };
+
+  const handleVoidInvoiceSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedInvoiceForVoid) return;
+    try {
+      const res = await invoiceApi.voidInvoice(selectedInvoiceForVoid._id, voidReason);
+      if (res.success) {
+        showToast(`Invoice #${selectedInvoiceForVoid.invoiceNumber} voided.`);
+        setSelectedInvoiceForVoid(null);
+        setVoidReason('');
+        await fetchAllData();
+      }
+    } catch (err) {
+      alert('Error voiding invoice: ' + err.message);
+    }
+  };
+
+  const handleCreateStandaloneInvoiceSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await invoiceApi.createInvoice(newInvoiceForm);
+      if (res.success) {
+        showToast(`Invoice #${res.invoice.invoiceNumber} created successfully!`);
+        setIsNewInvoiceModalOpen(false);
+        setNewInvoiceForm({
+          customerName: '',
+          businessName: '',
+          country: '',
+          email: '',
+          currency: 'USD',
+          incoterm: 'FOB',
+          docType: 'commercial_invoice',
+          items: [{ productName: '', quantity: 1, unitPrice: 0, hsnCode: '8205.59', unit: 'PCS' }],
+        });
+        await fetchAllData();
+      }
+    } catch (err) {
+      alert('Error creating invoice: ' + err.message);
+    }
+  };
+
+  const handleInvoiceItemChange = (index, field, value) => {
+    setNewInvoiceForm((prev) => {
+      const items = [...prev.items];
+      items[index] = { ...items[index], [field]: value };
+      return { ...prev, items };
+    });
+  };
+
+  const handleAddInvoiceItem = () => {
+    setNewInvoiceForm((prev) => ({
+      ...prev,
+      items: [
+        ...prev.items,
+        { productName: '', quantity: 1, unitPrice: 0, hsnCode: '8205.59', unit: 'PCS' },
+      ],
+    }));
+  };
+
+  const handleRemoveInvoiceItem = (index) => {
+    if (newInvoiceForm.items.length <= 1) return;
+    setNewInvoiceForm((prev) => ({
+      ...prev,
+      items: prev.items.filter((_, i) => i !== index),
+    }));
+  };
+
+
   // Update Status Action
   const handleUpdateStatus = async () => {
     if (!selectedOrderForStatus) return;
+    if (newStatus === 'Cancelled' && !cancellationReason.trim()) {
+      alert('Please provide a cancellation reason.');
+      return;
+    }
+
     try {
-      const res = await orderApi.updateOrderStatus(selectedOrderForStatus._id, {
+      const payload = {
         status: newStatus,
         note: statusNote || `Status changed to ${newStatus} by Admin`,
-      });
+      };
+      if (newStatus === 'Cancelled') {
+        payload.cancellationReason = cancellationReason;
+      }
+      if (newStatus === 'Shipped') {
+        if (trackingNumber) payload.trackingNumber = trackingNumber;
+        if (carrierName) payload.carrierName = carrierName;
+      }
+
+      const res = await orderApi.updateOrderStatus(selectedOrderForStatus._id, payload);
       if (res.success) {
         showToast(`Order #${selectedOrderForStatus.orderNumber} updated to ${newStatus}`);
         setSelectedOrderForStatus(null);
         setStatusNote('');
+        setTrackingNumber('');
+        setCancellationReason('');
         const updated = await orderApi.getAllOrders();
         if (updated.success) setOrders(updated.data);
       }
@@ -311,6 +481,30 @@ export const AdminDashboard = () => {
     return matchStatus && matchSearch;
   });
 
+  const filteredInvoices = invoices.filter((inv) => {
+    const matchStatus = invoiceFilter === 'All' || inv.status?.toLowerCase() === invoiceFilter.toLowerCase();
+    const matchSearch =
+      !invoiceSearch ||
+      inv.invoiceNumber?.toLowerCase().includes(invoiceSearch.toLowerCase()) ||
+      inv.customerDetails?.customerName?.toLowerCase().includes(invoiceSearch.toLowerCase()) ||
+      inv.customerDetails?.businessName?.toLowerCase().includes(invoiceSearch.toLowerCase()) ||
+      inv.customerDetails?.country?.toLowerCase().includes(invoiceSearch.toLowerCase()) ||
+      inv.orderNumber?.toLowerCase().includes(invoiceSearch.toLowerCase());
+    return matchStatus && matchSearch;
+  });
+
+  const invoiceStats = invoices.reduce(
+    (acc, inv) => {
+      if (inv.status !== 'void') {
+        acc.totalInvoiced += inv.totalAmount || 0;
+        acc.totalPaid += inv.amountPaid || 0;
+        acc.totalDue += inv.balanceDue || 0;
+      }
+      return acc;
+    },
+    { totalInvoiced: 0, totalPaid: 0, totalDue: 0 }
+  );
+
   return (
     <div style={{ padding: '2.5rem 0 4rem' }}>
       <div className="container">
@@ -408,6 +602,14 @@ export const AdminDashboard = () => {
           >
             <Package size={16} />
             <span>Orders Management ({orders.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('invoices')}
+            className={`btn btn-sm ${activeTab === 'invoices' ? 'btn-primary' : 'btn-secondary'}`}
+          >
+            <Receipt size={16} />
+            <span>Commercial Invoices ({invoices.length})</span>
           </button>
 
           <button
@@ -547,6 +749,268 @@ export const AdminDashboard = () => {
                             >
                               <FileDown size={14} />
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => handleGenerateInvoiceFromOrder(ord)}
+                              disabled={generatingInvoiceOrderId === ord._id}
+                              className="btn btn-secondary btn-sm"
+                              title="Generate / Sync Commercial Invoice"
+                              style={{ color: '#10B981' }}
+                            >
+                              <Receipt size={14} />
+                              <span>{generatingInvoiceOrderId === ord._id ? '...' : 'Invoice'}</span>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB: COMMERCIAL INVOICES MANAGEMENT */}
+        {activeTab === 'invoices' && (
+          <div className="glass-card">
+            {/* Top Invoices Metric Cards */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                gap: '1rem',
+                marginBottom: '1.5rem',
+              }}
+            >
+              <div
+                style={{
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  padding: '1rem 1.25rem',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-subtle)',
+                }}
+              >
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
+                  Total Invoiced
+                </div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent-amber)' }}>
+                  ${invoiceStats.totalInvoiced.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  padding: '1rem 1.25rem',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-subtle)',
+                }}
+              >
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
+                  Total Collected
+                </div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#10B981' }}>
+                  ${invoiceStats.totalPaid.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  padding: '1rem 1.25rem',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-subtle)',
+                }}
+              >
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
+                  Outstanding Balance
+                </div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#EF4444' }}>
+                  ${invoiceStats.totalDue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  padding: '1rem 1.25rem',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-subtle)',
+                }}
+              >
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
+                  Total Invoices
+                </div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#FFFFFF' }}>
+                  {invoices.length}
+                </div>
+              </div>
+            </div>
+
+            {/* Filters and Actions */}
+            <div
+              style={{
+                display: 'flex',
+                gap: '1rem',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: '1.5rem',
+              }}
+            >
+              <div style={{ position: 'relative', flex: '1 1 280px' }}>
+                <Search
+                  size={16}
+                  color="var(--text-muted)"
+                  style={{ position: 'absolute', left: '0.85rem', top: '50%', transform: 'translateY(-50%)' }}
+                />
+                <input
+                  type="text"
+                  placeholder="Search by Invoice #, Order #, Buyer, Country..."
+                  className="form-control"
+                  style={{ paddingLeft: '2.5rem' }}
+                  value={invoiceSearch}
+                  onChange={(e) => setInvoiceSearch(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                {['All', 'Draft', 'Sent', 'Paid', 'Partial', 'Overdue', 'Void'].map((st) => (
+                  <button
+                    key={st}
+                    onClick={() => setInvoiceFilter(st)}
+                    className={`btn btn-sm ${invoiceFilter === st ? 'btn-primary' : 'btn-secondary'}`}
+                  >
+                    {st}
+                  </button>
+                ))}
+
+                <button
+                  onClick={() => setIsNewInvoiceModalOpen(true)}
+                  className="btn btn-primary btn-sm"
+                  style={{ marginLeft: '0.5rem' }}
+                >
+                  <Plus size={16} />
+                  <span>New Standalone Invoice</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Invoices Table */}
+            {filteredInvoices.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-secondary)' }}>
+                <Receipt size={40} style={{ opacity: 0.3, marginBottom: '0.75rem' }} />
+                <p>No commercial invoices found matching current criteria.</p>
+              </div>
+            ) : (
+              <div className="table-responsive">
+                <table className="custom-table">
+                  <thead>
+                    <tr>
+                      <th>Invoice #</th>
+                      <th>Order Ref</th>
+                      <th>Issue / Due Date</th>
+                      <th>Consignee</th>
+                      <th style={{ textAlign: 'right' }}>Total</th>
+                      <th style={{ textAlign: 'right' }}>Paid / Due</th>
+                      <th>Status</th>
+                      <th style={{ textAlign: 'center' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredInvoices.map((inv) => (
+                      <tr key={inv._id}>
+                        <td>
+                          <div style={{ fontWeight: 700, color: '#FFFFFF' }}>{inv.invoiceNumber}</div>
+                          <span
+                            className="badge badge-slate"
+                            style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}
+                          >
+                            {inv.docType?.replace('_', ' ') || 'Commercial'}
+                          </span>
+                        </td>
+                        <td>
+                          {inv.orderId ? (
+                            <span className="badge badge-amber">{inv.orderNumber || 'Order'}</span>
+                          ) : (
+                            <span className="badge badge-slate">Standalone</span>
+                          )}
+                        </td>
+                        <td style={{ fontSize: '0.85rem' }}>
+                          <div>{inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleDateString() : '-'}</div>
+                          {inv.dueDate && (
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                              Due: {new Date(inv.dueDate).toLocaleDateString()}
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{inv.customerDetails?.customerName || '-'}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                            {inv.customerDetails?.businessName} ({inv.customerDetails?.country})
+                          </div>
+                        </td>
+                        <td style={{ textAlign: 'right', fontWeight: 800, color: 'var(--accent-amber)' }}>
+                          ${inv.totalAmount?.toFixed(2)} {inv.currency}
+                        </td>
+                        <td style={{ textAlign: 'right', fontSize: '0.85rem' }}>
+                          <div style={{ color: '#10B981', fontWeight: 600 }}>
+                            Paid: ${inv.amountPaid?.toFixed(2)}
+                          </div>
+                          {inv.balanceDue > 0 ? (
+                            <div style={{ color: '#EF4444', fontWeight: 600 }}>
+                              Due: ${inv.balanceDue?.toFixed(2)}
+                            </div>
+                          ) : (
+                            <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Settled</div>
+                          )}
+                        </td>
+                        <td>
+                          <StatusBadge status={inv.status} />
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <div style={{ display: 'inline-flex', gap: '0.4rem' }}>
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadInvoicePdf(inv._id, inv.invoiceNumber)}
+                              disabled={downloadingInvoicePdfId === inv._id}
+                              className="btn btn-secondary btn-sm"
+                              title="Download Commercial Invoice PDF"
+                            >
+                              <FileDown size={14} />
+                            </button>
+                            {inv.status !== 'void' && inv.balanceDue > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedInvoiceForPayment(inv);
+                                  setPaymentForm({
+                                    amount: inv.balanceDue,
+                                    paymentMethod: 'Wire Transfer',
+                                    referenceNumber: '',
+                                    notes: '',
+                                  });
+                                }}
+                                className="btn btn-secondary btn-sm"
+                                title="Record Payment"
+                                style={{ color: '#10B981' }}
+                              >
+                                <CreditCard size={14} />
+                                <span>Pay</span>
+                              </button>
+                            )}
+                            {inv.status !== 'void' && inv.status !== 'paid' && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedInvoiceForVoid(inv)}
+                                className="btn btn-secondary btn-sm"
+                                title="Void Invoice"
+                                style={{ color: '#EF4444' }}
+                              >
+                                <Ban size={14} />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -944,15 +1408,57 @@ export const AdminDashboard = () => {
               value={newStatus}
               onChange={(e) => setNewStatus(e.target.value)}
             >
-              <option value="Submitted">Submitted (Under Review)</option>
-              <option value="Under Review">Under Review (Pricing Check)</option>
-              <option value="Confirmed">Confirmed (Proforma Issued)</option>
+              <option value="Submitted">Submitted (Buyer Order Received)</option>
+              <option value="Confirmed">Confirmed (Accepted & Terms Fixed)</option>
               <option value="In Production">In Production (Forging/Assembly)</option>
-              <option value="Dispatched">Dispatched (Bill of Lading Issued)</option>
-              <option value="Completed">Completed (Delivered)</option>
-              <option value="Cancelled">Cancelled</option>
+              <option value="Quality Check">Quality Check (QC & Pre-Pack Inspection)</option>
+              <option value="Shipped">Shipped (Export Docs Finalized & Dispatched)</option>
+              <option value="Delivered">Delivered (Buyer Receipt Confirmed)</option>
+              <option value="Closed">Closed (Terminal Success State)</option>
+              <option value="Cancelled">Cancelled (Order Voided)</option>
             </select>
           </div>
+
+          {newStatus === 'Shipped' && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Carrier Name</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="e.g. DHL Express / Maersk"
+                  value={carrierName}
+                  onChange={(e) => setCarrierName(e.target.value)}
+                />
+              </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Tracking / BL Number</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="e.g. 7483920194"
+                  value={trackingNumber}
+                  onChange={(e) => setTrackingNumber(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+
+          {newStatus === 'Cancelled' && (
+            <div className="form-group">
+              <label className="form-label" style={{ color: 'var(--accent-rose)' }}>
+                Cancellation Reason * (Required)
+              </label>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="e.g. Customer requested specification change / Commercial dispute"
+                value={cancellationReason}
+                onChange={(e) => setCancellationReason(e.target.value)}
+                required
+              />
+            </div>
+          )}
 
           <div className="form-group">
             <label className="form-label">Internal & Customer Note</label>
@@ -1086,6 +1592,355 @@ export const AdminDashboard = () => {
                 className="btn btn-primary btn-sm"
               >
                 {editingProduct ? 'Save Changes' : 'Create Product'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Modal: Record Payment */}
+      {selectedInvoiceForPayment && (
+        <Modal
+          isOpen={Boolean(selectedInvoiceForPayment)}
+          onClose={() => setSelectedInvoiceForPayment(null)}
+          title={`Record Payment for #${selectedInvoiceForPayment.invoiceNumber}`}
+        >
+          <form onSubmit={handleRecordPaymentSubmit}>
+            <div style={{ marginBottom: '1.25rem', padding: '0.75rem', background: 'rgba(255, 255, 255, 0.03)', borderRadius: 'var(--radius-sm)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
+                <span style={{ color: 'var(--text-muted)' }}>Total Invoiced:</span>
+                <span style={{ fontWeight: 700 }}>${selectedInvoiceForPayment.totalAmount?.toFixed(2)} {selectedInvoiceForPayment.currency}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                <span style={{ color: 'var(--text-muted)' }}>Outstanding Balance:</span>
+                <span style={{ fontWeight: 700, color: '#EF4444' }}>${selectedInvoiceForPayment.balanceDue?.toFixed(2)} {selectedInvoiceForPayment.currency}</span>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Payment Amount ({selectedInvoiceForPayment.currency}) *</label>
+              <input
+                type="number"
+                step="0.01"
+                min="0.01"
+                max={selectedInvoiceForPayment.balanceDue}
+                required
+                className="form-control"
+                value={paymentForm.amount}
+                onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })}
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Payment Method *</label>
+              <select
+                className="form-control form-select"
+                value={paymentForm.paymentMethod}
+                onChange={(e) => setPaymentForm({ ...paymentForm, paymentMethod: e.target.value })}
+              >
+                <option value="Wire Transfer">Wire Transfer (TT)</option>
+                <option value="Letter of Credit">Letter of Credit (LC)</option>
+                <option value="Credit Card">Credit Card</option>
+                <option value="Cash">Cash</option>
+                <option value="Cheque">Cheque</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Transaction Reference / UTR / Swift #</label>
+              <input
+                type="text"
+                placeholder="e.g. UTR-20260923-8472"
+                className="form-control"
+                value={paymentForm.referenceNumber}
+                onChange={(e) => setPaymentForm({ ...paymentForm, referenceNumber: e.target.value })}
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Payment Notes</label>
+              <textarea
+                rows={2}
+                className="form-control"
+                placeholder="e.g. 50% advance TT received via State Bank of India"
+                value={paymentForm.notes}
+                onChange={(e) => setPaymentForm({ ...paymentForm, notes: e.target.value })}
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem' }}>
+              <button
+                type="button"
+                onClick={() => setSelectedInvoiceForPayment(null)}
+                className="btn btn-secondary btn-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="btn btn-primary btn-sm"
+              >
+                Record Payment
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Modal: Void Invoice */}
+      {selectedInvoiceForVoid && (
+        <Modal
+          isOpen={Boolean(selectedInvoiceForVoid)}
+          onClose={() => setSelectedInvoiceForVoid(null)}
+          title={`Void Invoice #${selectedInvoiceForVoid.invoiceNumber}`}
+        >
+          <form onSubmit={handleVoidInvoiceSubmit}>
+            <div style={{ marginBottom: '1.25rem', color: '#EF4444', fontSize: '0.9rem' }}>
+              Warning: Voiding an invoice cancels all outstanding balances and marks the invoice as void. This action cannot be undone.
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" style={{ color: 'var(--accent-rose)' }}>
+                Void Reason * (Required)
+              </label>
+              <textarea
+                rows={3}
+                required
+                className="form-control"
+                placeholder="e.g. Buyer amended order specification; regenerated as new invoice."
+                value={voidReason}
+                onChange={(e) => setVoidReason(e.target.value)}
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem' }}>
+              <button
+                type="button"
+                onClick={() => setSelectedInvoiceForVoid(null)}
+                className="btn btn-secondary btn-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="btn btn-sm"
+                style={{ backgroundColor: '#EF4444', color: '#FFFFFF' }}
+              >
+                Confirm Void
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Modal: Create Standalone Commercial Invoice */}
+      {isNewInvoiceModalOpen && (
+        <Modal
+          isOpen={isNewInvoiceModalOpen}
+          onClose={() => setIsNewInvoiceModalOpen(false)}
+          title="Create Standalone Commercial Invoice"
+          maxWidth="850px"
+        >
+          <form onSubmit={handleCreateStandaloneInvoiceSubmit}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+              <div className="form-group">
+                <label className="form-label">Buyer / Consignee Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. John Doe"
+                  className="form-control"
+                  value={newInvoiceForm.customerName}
+                  onChange={(e) => setNewInvoiceForm({ ...newInvoiceForm, customerName: e.target.value })}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Company / Business Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Acme Industrial Imports LLC"
+                  className="form-control"
+                  value={newInvoiceForm.businessName}
+                  onChange={(e) => setNewInvoiceForm({ ...newInvoiceForm, businessName: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+              <div className="form-group">
+                <label className="form-label">Destination Country *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. United States"
+                  className="form-control"
+                  value={newInvoiceForm.country}
+                  onChange={(e) => setNewInvoiceForm({ ...newInvoiceForm, country: e.target.value })}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Buyer Email</label>
+                <input
+                  type="email"
+                  placeholder="buyer@example.com"
+                  className="form-control"
+                  value={newInvoiceForm.email}
+                  onChange={(e) => setNewInvoiceForm({ ...newInvoiceForm, email: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+              <div className="form-group">
+                <label className="form-label">Document Type</label>
+                <select
+                  className="form-control form-select"
+                  value={newInvoiceForm.docType}
+                  onChange={(e) => setNewInvoiceForm({ ...newInvoiceForm, docType: e.target.value })}
+                >
+                  <option value="commercial_invoice">Commercial Invoice</option>
+                  <option value="proforma_invoice">Proforma Invoice</option>
+                  <option value="tax_invoice">Tax Invoice</option>
+                  <option value="sample_invoice">Sample Invoice</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Currency</label>
+                <select
+                  className="form-control form-select"
+                  value={newInvoiceForm.currency}
+                  onChange={(e) => setNewInvoiceForm({ ...newInvoiceForm, currency: e.target.value })}
+                >
+                  <option value="USD">USD ($)</option>
+                  <option value="EUR">EUR (€)</option>
+                  <option value="GBP">GBP (£)</option>
+                  <option value="INR">INR (₹)</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Incoterm</label>
+                <select
+                  className="form-control form-select"
+                  value={newInvoiceForm.incoterm}
+                  onChange={(e) => setNewInvoiceForm({ ...newInvoiceForm, incoterm: e.target.value })}
+                >
+                  <option value="FOB">FOB (Free on Board)</option>
+                  <option value="CIF">CIF (Cost, Insurance & Freight)</option>
+                  <option value="CFR">CFR (Cost and Freight)</option>
+                  <option value="EXW">EXW (Ex Works)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Line Items */}
+            <div style={{ marginBottom: '1.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                <h4 style={{ color: '#FFFFFF', margin: 0, fontSize: '1rem' }}>Line Items</h4>
+                <button
+                  type="button"
+                  onClick={handleAddInvoiceItem}
+                  className="btn btn-secondary btn-sm"
+                >
+                  <Plus size={14} />
+                  <span>Add Item</span>
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {newInvoiceForm.items.map((item, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '2.5fr 1fr 1fr 1fr 1fr auto',
+                      gap: '0.5rem',
+                      alignItems: 'center',
+                      background: 'rgba(255, 255, 255, 0.02)',
+                      padding: '0.5rem',
+                      borderRadius: 'var(--radius-sm)',
+                    }}
+                  >
+                    <input
+                      type="text"
+                      required
+                      placeholder="Product description *"
+                      className="form-control form-control-sm"
+                      value={item.productName}
+                      onChange={(e) => handleInvoiceItemChange(idx, 'productName', e.target.value)}
+                    />
+                    <input
+                      type="text"
+                      placeholder="HSN Code"
+                      className="form-control form-control-sm"
+                      value={item.hsnCode}
+                      onChange={(e) => handleInvoiceItemChange(idx, 'hsnCode', e.target.value)}
+                    />
+                    <input
+                      type="number"
+                      min="1"
+                      required
+                      placeholder="Qty *"
+                      className="form-control form-control-sm"
+                      value={item.quantity}
+                      onChange={(e) => handleInvoiceItemChange(idx, 'quantity', parseInt(e.target.value, 10) || 1)}
+                    />
+                    <input
+                      type="text"
+                      placeholder="Unit"
+                      className="form-control form-control-sm"
+                      value={item.unit}
+                      onChange={(e) => handleInvoiceItemChange(idx, 'unit', e.target.value)}
+                    />
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      required
+                      placeholder="Price *"
+                      className="form-control form-control-sm"
+                      value={item.unitPrice}
+                      onChange={(e) => handleInvoiceItemChange(idx, 'unitPrice', parseFloat(e.target.value) || 0)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveInvoiceItem(idx)}
+                      disabled={newInvoiceForm.items.length <= 1}
+                      className="btn btn-secondary btn-sm"
+                      style={{ padding: '0.4rem', color: '#EF4444' }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ textAlign: 'right', marginTop: '1rem', fontSize: '1rem', fontWeight: 800, color: 'var(--accent-amber)' }}>
+                Total: {newInvoiceForm.currency} $
+                {newInvoiceForm.items
+                  .reduce((sum, it) => sum + (it.quantity || 0) * (it.unitPrice || 0), 0)
+                  .toFixed(2)}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem' }}>
+              <button
+                type="button"
+                onClick={() => setIsNewInvoiceModalOpen(false)}
+                className="btn btn-secondary btn-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="btn btn-primary btn-sm"
+              >
+                Generate Commercial Invoice
               </button>
             </div>
           </form>

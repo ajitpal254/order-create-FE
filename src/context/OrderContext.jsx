@@ -3,6 +3,13 @@ import { orderApi } from '../api/client';
 
 const OrderContext = createContext(null);
 
+const generateIdempotencyKey = () => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `hao_idem_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+};
+
 export const OrderProvider = ({ children }) => {
   const [cartItems, setCartItems] = useState(() => {
     try {
@@ -13,19 +20,30 @@ export const OrderProvider = ({ children }) => {
     }
   });
 
-  const [orderMetadata, setOrderMetadata] = useState({
-    shippingMarks: 'H.A. OVERSEAS / ORDER LOT\nPORT OF DISCHARGE: BUYER PORT\nFRAGILE / HANDLE WITH CARE',
-    specialInstructions: 'Export seaworthy 7-ply corrugated cartons with inner water-proof plastic barrier.',
-    customerOverride: null,
+  const [orderMetadata, setOrderMetadata] = useState(() => {
+    try {
+      const saved = localStorage.getItem('hao_order_metadata');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {
+      shippingMarks: 'H.A. OVERSEAS / ORDER LOT\nPORT OF DISCHARGE: BUYER PORT\nFRAGILE / HANDLE WITH CARE',
+      specialInstructions: 'Export seaworthy 7-ply corrugated cartons with inner water-proof plastic barrier.',
+      customerOverride: null,
+      incoterm: 'FOB',
+      currency: 'USD',
+    };
   });
 
   useEffect(() => {
     localStorage.setItem('hao_order_cart', JSON.stringify(cartItems));
   }, [cartItems]);
 
+  useEffect(() => {
+    localStorage.setItem('hao_order_metadata', JSON.stringify(orderMetadata));
+  }, [orderMetadata]);
+
   const addItem = (item) => {
     setCartItems((prev) => {
-      // Look for identical variant
       const existingIndex = prev.findIndex(
         (i) =>
           i.product === item.product &&
@@ -84,6 +102,36 @@ export const OrderProvider = ({ children }) => {
   const clearCart = () => {
     setCartItems([]);
     localStorage.removeItem('hao_order_cart');
+    localStorage.removeItem('hao_order_metadata');
+  };
+
+  // 1-Click Re-order / Clone previous order into active cart
+  const cloneOrderToCart = (pastOrder) => {
+    if (!pastOrder || !pastOrder.items) return;
+    const clonedItems = pastOrder.items.map((it) => ({
+      product: it.product?._id || it.product,
+      productName: it.productName,
+      sku: it.sku,
+      size: it.size,
+      finish: it.finish,
+      color: it.color,
+      brand: it.brand,
+      quantity: it.quantity,
+      unitPrice: it.unitPrice,
+      totalPrice: it.totalPrice,
+      packaging: it.packaging,
+      customMarking: it.customMarking,
+      itemNotes: it.itemNotes,
+    }));
+
+    setCartItems(clonedItems);
+    setOrderMetadata((prev) => ({
+      ...prev,
+      shippingMarks: pastOrder.shippingMarks || prev.shippingMarks,
+      specialInstructions: pastOrder.specialInstructions || prev.specialInstructions,
+      incoterm: pastOrder.incoterm || prev.incoterm,
+      currency: pastOrder.currency || prev.currency,
+    }));
   };
 
   // Compute live totals
@@ -106,19 +154,44 @@ export const OrderProvider = ({ children }) => {
   totals.totalAmount = parseFloat(totals.totalAmount.toFixed(2));
   totals.estimatedWeightKg = parseFloat(totals.estimatedWeightKg.toFixed(2));
 
-  const submitOrder = async () => {
+  const saveDraftToBackend = async () => {
+    if (cartItems.length === 0) return null;
+    try {
+      const payload = {
+        items: cartItems,
+        shippingMarks: orderMetadata.shippingMarks,
+        specialInstructions: orderMetadata.specialInstructions,
+        customerDetailsOverride: orderMetadata.customerOverride,
+        incoterm: orderMetadata.incoterm || 'FOB',
+        currency: orderMetadata.currency || 'USD',
+        status: 'Draft',
+      };
+      return await orderApi.createOrder(payload);
+    } catch (err) {
+      console.warn('Auto-saving backend draft failed:', err.message);
+      return null;
+    }
+  };
+
+  const submitOrder = async (orderType = 'Order') => {
     if (cartItems.length === 0) {
       throw new Error('Order sheet is empty. Please add products first.');
     }
+
+    const idempotencyKey = generateIdempotencyKey();
 
     const payload = {
       items: cartItems,
       shippingMarks: orderMetadata.shippingMarks,
       specialInstructions: orderMetadata.specialInstructions,
       customerDetailsOverride: orderMetadata.customerOverride,
+      incoterm: orderMetadata.incoterm || 'FOB',
+      currency: orderMetadata.currency || 'USD',
+      orderType,
+      status: 'Submitted',
     };
 
-    const res = await orderApi.createOrder(payload);
+    const res = await orderApi.createOrder(payload, idempotencyKey);
     if (res.success) {
       clearCart();
       return res;
@@ -136,7 +209,9 @@ export const OrderProvider = ({ children }) => {
         updateItem,
         removeItem,
         clearCart,
+        cloneOrderToCart,
         totals,
+        saveDraftToBackend,
         submitOrder,
       }}
     >
