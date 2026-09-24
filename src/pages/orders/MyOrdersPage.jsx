@@ -458,6 +458,43 @@ export const MyOrdersPage = () => {
                           <span>{downloadingId === order._id ? 'Generating...' : 'PDF Proforma'}</span>
                         </button>
 
+                        {(() => {
+                          const linkedInvoice = invoices.find(
+                            (inv) => (inv.order?._id || inv.order) === order._id
+                          );
+                          if (linkedInvoice) {
+                            return (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate(`/invoices/${linkedInvoice._id}`);
+                                }}
+                                className="btn btn-secondary btn-sm"
+                                style={{ borderColor: 'rgba(245, 158, 11, 0.4)', color: 'var(--accent-amber)' }}
+                                title="View Commercial Invoice"
+                              >
+                                <Receipt size={14} />
+                                <span>Invoice #{linkedInvoice.invoiceNumber ? linkedInvoice.invoiceNumber.slice(-6) : ''}</span>
+                              </button>
+                            );
+                          }
+                          return (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/invoices/new?orderId=${order._id}`);
+                              }}
+                              className="btn btn-secondary btn-sm"
+                              title="Generate Commercial Invoice for this order"
+                            >
+                              <Receipt size={14} />
+                              <span>Invoice</span>
+                            </button>
+                          );
+                        })()}
+
                         <button
                           type="button"
                           className="btn btn-icon"

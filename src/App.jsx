@@ -12,6 +12,9 @@ import { LoginPage } from './pages/auth/LoginPage';
 import { SignupPage } from './pages/auth/SignupPage';
 import { MyOrdersPage } from './pages/orders/MyOrdersPage';
 import { AdminDashboard } from './pages/admin/AdminDashboard';
+import { InvoicesPage } from './pages/invoices/InvoicesPage';
+import { InvoiceDetailPage } from './pages/invoices/InvoiceDetailPage';
+import { CreateInvoicePage } from './pages/invoices/CreateInvoicePage';
 
 // Route Guard for Authenticated Users
 const ProtectedRoute = ({ children }) => {
@@ -51,6 +54,33 @@ function App() {
                   element={
                     <ProtectedRoute>
                       <MyOrdersPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/invoices"
+                  element={
+                    <ProtectedRoute>
+                      <InvoicesPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/invoices/new"
+                  element={
+                    <ProtectedRoute>
+                      <CreateInvoicePage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/invoices/:id"
+                  element={
+                    <ProtectedRoute>
+                      <InvoiceDetailPage />
                     </ProtectedRoute>
                   }
                 />

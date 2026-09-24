@@ -10,7 +10,8 @@ import {
   ShieldCheck, 
   Package, 
   Layers,
-  FileText
+  FileText,
+  Receipt
 } from 'lucide-react';
 
 export const Navbar = () => {
@@ -119,6 +120,20 @@ export const Navbar = () => {
             >
               <Package size={16} />
               <span>My Orders</span>
+            </Link>
+          )}
+
+          {isAuthenticated && (
+            <Link
+              to="/invoices"
+              className="btn btn-secondary btn-sm"
+              style={{
+                borderColor: isActive('/invoices') ? 'var(--accent-amber)' : 'transparent',
+                color: isActive('/invoices') ? '#FFFFFF' : 'var(--text-secondary)',
+              }}
+            >
+              <Receipt size={16} />
+              <span>Invoices</span>
             </Link>
           )}
 
