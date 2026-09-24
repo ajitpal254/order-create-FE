@@ -2,6 +2,8 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { OrderProvider } from './context/OrderContext';
+import { UIProvider } from './context/UIContext';
+import { InvoiceProvider } from './context/InvoiceContext';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 
@@ -38,69 +40,82 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <OrderProvider>
-          <div className="app-wrapper">
-            <Navbar />
-            <main className="main-content">
-              <Routes>
-                <Route path="/" element={<Home />} />
-                <Route path="/catalog" element={<CatalogPage />} />
-                <Route path="/order-creator" element={<OrderCreatorPage />} />
-                <Route path="/login" element={<LoginPage />} />
-                <Route path="/signup" element={<SignupPage />} />
+          <UIProvider>
+            <InvoiceProvider>
+              <div className="app-wrapper">
+                <Navbar />
+                <main className="main-content">
+                  <Routes>
+                    <Route path="/" element={<Home />} />
+                    <Route path="/catalog" element={<CatalogPage />} />
+                    <Route path="/order-creator" element={<OrderCreatorPage />} />
+                    <Route path="/login" element={<LoginPage />} />
+                    <Route path="/signup" element={<SignupPage />} />
 
-                {/* Protected Buyer Routes */}
-                <Route
-                  path="/my-orders"
-                  element={
-                    <ProtectedRoute>
-                      <MyOrdersPage />
-                    </ProtectedRoute>
-                  }
-                />
+                    {/* Protected Buyer Routes */}
+                    <Route
+                      path="/my-orders"
+                      element={
+                        <ProtectedRoute>
+                          <MyOrdersPage />
+                        </ProtectedRoute>
+                      }
+                    />
 
-                <Route
-                  path="/invoices"
-                  element={
-                    <ProtectedRoute>
-                      <InvoicesPage />
-                    </ProtectedRoute>
-                  }
-                />
+                    <Route
+                      path="/invoices"
+                      element={
+                        <ProtectedRoute>
+                          <InvoicesPage />
+                        </ProtectedRoute>
+                      }
+                    />
 
-                <Route
-                  path="/invoices/new"
-                  element={
-                    <ProtectedRoute>
-                      <CreateInvoicePage />
-                    </ProtectedRoute>
-                  }
-                />
+                    <Route
+                      path="/invoices/new"
+                      element={
+                        <ProtectedRoute>
+                          <CreateInvoicePage />
+                        </ProtectedRoute>
+                      }
+                    />
 
-                <Route
-                  path="/invoices/:id"
-                  element={
-                    <ProtectedRoute>
-                      <InvoiceDetailPage />
-                    </ProtectedRoute>
-                  }
-                />
+                    <Route
+                      path="/invoices/:id"
+                      element={
+                        <ProtectedRoute>
+                          <InvoiceDetailPage />
+                        </ProtectedRoute>
+                      }
+                    />
 
-                {/* Protected Admin Routes */}
-                <Route
-                  path="/admin"
-                  element={
-                    <AdminRoute>
-                      <AdminDashboard />
-                    </AdminRoute>
-                  }
-                />
+                    <Route
+                      path="/invoices/:id/edit"
+                      element={
+                        <ProtectedRoute>
+                          <CreateInvoicePage isEditMode={true} />
+                        </ProtectedRoute>
+                      }
+                    />
 
-                {/* Fallback */}
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </main>
-            <Footer />
-          </div>
+                    {/* Protected Admin Routes */}
+                    <Route
+                      path="/admin"
+                      element={
+                        <AdminRoute>
+                          <AdminDashboard />
+                        </AdminRoute>
+                      }
+                    />
+
+                    {/* Fallback */}
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                  </Routes>
+                </main>
+                <Footer />
+              </div>
+            </InvoiceProvider>
+          </UIProvider>
         </OrderProvider>
       </AuthProvider>
     </BrowserRouter>

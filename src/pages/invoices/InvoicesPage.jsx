@@ -12,7 +12,9 @@ import {
   Calendar,
   Building,
   AlertCircle,
-  FileText
+  FileText,
+  Copy,
+  Edit3
 } from 'lucide-react';
 
 export const InvoicesPage = () => {
@@ -458,7 +460,35 @@ export const InvoicesPage = () => {
                   </div>
 
                   {/* Actions */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                    {inv.status !== 'void' && (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/invoices/${inv._id}/edit`);
+                        }}
+                        title="Edit this invoice"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                      >
+                        <Edit3 size={13} />
+                        <span>Edit</span>
+                      </button>
+                    )}
+
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/invoices/new?cloneFrom=${inv._id}`);
+                      }}
+                      title="Clone & Re-Issue this invoice"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                    >
+                      <Copy size={13} />
+                      <span>Clone</span>
+                    </button>
+
                     <button
                       className="btn btn-secondary btn-sm"
                       onClick={(e) => handleDownloadPdf(e, inv)}
@@ -466,7 +496,7 @@ export const InvoicesPage = () => {
                       title="Download PDF"
                       style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
                     >
-                      <FileDown size={15} />
+                      <FileDown size={14} />
                       <span>{downloadingId === inv._id ? 'Downloading...' : 'PDF'}</span>
                     </button>
 

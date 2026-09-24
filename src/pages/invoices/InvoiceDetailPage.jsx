@@ -12,7 +12,11 @@ import {
   CreditCard,
   Ban,
   AlertCircle,
-  ShieldAlert
+  ShieldAlert,
+  Copy,
+  Edit3,
+  Send,
+  CheckCircle
 } from 'lucide-react';
 
 export const InvoiceDetailPage = () => {
@@ -24,6 +28,7 @@ export const InvoiceDetailPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
 
   // Modals state
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -42,19 +47,34 @@ export const InvoiceDetailPage = () => {
   const [voidSubmitting, setVoidSubmitting] = useState(false);
   const [voidError, setVoidError] = useState(null);
 
+  const handleMarkAsSent = async () => {
+    try {
+      setUpdatingStatus(true);
+      const res = await invoiceApi.updateInvoice(invoice._id, { status: 'sent' });
+      if (res.success) {
+        await fetchInvoice();
+      }
+    } catch (err) {
+      alert('Failed to update status: ' + err.message);
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
   const fetchInvoice = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       const res = await invoiceApi.getInvoiceById(id);
-      if (res.success && res.data) {
-        setInvoice(res.data);
+      const invData = res.data || res.invoice;
+      if (res.success && invData) {
+        setInvoice(invData);
         setPaymentForm((prev) => ({
           ...prev,
-          amount: (res.data.balanceDue != null ? res.data.balanceDue : (res.data.grandTotal - (res.data.amountPaid || 0))).toString(),
+          amount: (invData.balanceDue != null ? invData.balanceDue : (invData.grandTotal - (invData.amountPaid || 0))).toString(),
         }));
       } else {
-        setError('Invoice not found');
+        setError(res.message || 'Invoice not found');
       }
     } catch (err) {
       console.error('Failed to load invoice:', err);
@@ -204,6 +224,47 @@ export const InvoiceDetailPage = () => {
         </button>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+          {invoice.status === 'draft' && (
+            <button
+              onClick={handleMarkAsSent}
+              disabled={updatingStatus}
+              className="btn btn-primary btn-sm"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                backgroundColor: 'var(--accent-emerald)',
+                borderColor: 'var(--accent-emerald)',
+              }}
+              title="Issue invoice and move status out of Draft to Sent/Active"
+            >
+              <Send size={15} />
+              <span>{updatingStatus ? 'Issuing...' : 'Mark as Sent / Issue'}</span>
+            </button>
+          )}
+
+          {!isVoid && (
+            <button
+              onClick={() => navigate(`/invoices/${invoice._id}/edit`)}
+              className="btn btn-secondary btn-sm"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+              title="Edit line items, hours/quantities, prices, or company info"
+            >
+              <Edit3 size={15} />
+              <span>Edit Invoice</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => navigate(`/invoices/new?cloneFrom=${invoice._id}`)}
+            className="btn btn-secondary btn-sm"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+            title="Duplicate line items and customer details into a new invoice"
+          >
+            <Copy size={15} />
+            <span>Duplicate Invoice</span>
+          </button>
+
           <button
             onClick={handleDownloadPdf}
             disabled={downloadingPdf}
@@ -250,6 +311,52 @@ export const InvoiceDetailPage = () => {
           )}
         </div>
       </div>
+
+      {/* Draft Notice Banner */}
+      {invoice.status === 'draft' && (
+        <div
+          className="glass-card"
+          style={{
+            padding: '1.1rem 1.5rem',
+            marginBottom: '2rem',
+            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+            borderColor: 'rgba(245, 158, 11, 0.35)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '1rem',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <AlertCircle size={24} color="var(--accent-amber)" style={{ flexShrink: 0 }} />
+            <div>
+              <div style={{ fontWeight: 700, color: 'var(--accent-amber)', fontSize: '0.95rem' }}>
+                Invoice in DRAFT Status
+              </div>
+              <div style={{ fontSize: '0.825rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
+                This invoice is currently staging as a draft. Click "Mark as Sent / Issue" to activate it for customer billing.
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={handleMarkAsSent}
+            disabled={updatingStatus}
+            className="btn btn-primary btn-sm"
+            style={{
+              backgroundColor: 'var(--accent-emerald)',
+              borderColor: 'var(--accent-emerald)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+            }}
+          >
+            <Send size={14} />
+            <span>{updatingStatus ? 'Issuing...' : 'Mark as Sent / Issue'}</span>
+          </button>
+        </div>
+      )}
 
       {/* Void Notice Banner */}
       {isVoid && (
@@ -487,9 +594,11 @@ export const InvoiceDetailPage = () => {
                 <td style={{ padding: '0.85rem 0.75rem', color: 'var(--text-muted)' }}>{idx + 1}</td>
                 <td style={{ padding: '0.85rem 0.75rem' }}>
                   <div style={{ fontWeight: 600 }}>{it.productName}</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                    SKU: {it.sku || 'N/A'} {it.description && `• ${it.description}`}
-                  </div>
+                  {it.sku && it.sku !== 'N/A' && (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
+                      SKU: {it.sku}
+                    </div>
+                  )}
                 </td>
                 <td style={{ padding: '0.85rem 0.75rem', color: 'var(--text-secondary)' }}>
                   {it.hsnCode || '8205.59'}
@@ -523,7 +632,7 @@ export const InvoiceDetailPage = () => {
           <div style={{ minWidth: '280px', display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.85rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)' }}>
               <span>Subtotal:</span>
-              <strong style={{ color: '#FFFFFF' }}>${(invoice.subTotal || 0).toFixed(2)}</strong>
+              <strong style={{ color: '#FFFFFF' }}>${((invoice.subtotal != null ? invoice.subtotal : invoice.subTotal) || 0).toFixed(2)}</strong>
             </div>
 
             {invoice.discountAmount > 0 && (

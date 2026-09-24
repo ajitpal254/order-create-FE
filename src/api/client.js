@@ -85,7 +85,11 @@ export async function apiRequest(endpoint, options = {}) {
   const data = isJson ? await response.json() : await response.text();
 
   if (!response.ok) {
-    const errorMsg = data?.message || (typeof data === 'string' ? data : 'Request failed');
+    let errorMsg = data?.message || (typeof data === 'string' ? data : 'Request failed');
+    if (Array.isArray(data?.errors) && data.errors.length > 0) {
+      const detailed = data.errors.map((e) => `${e.field || 'field'}: ${e.message}`).join(', ');
+      errorMsg = `${errorMsg} — ${detailed}`;
+    }
     const err = new Error(errorMsg);
     err.status = response.status;
     err.data = data;
@@ -284,19 +288,26 @@ export const invoiceApi = {
     }),
   getPdfUrl: (id) => {
     const token = localStorage.getItem('hao_token');
-    return `/api/invoices/${id}/pdf${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    return `${API_BASE}/invoices/${id}/pdf${token ? `?token=${encodeURIComponent(token)}` : ''}`;
   },
   downloadPdf: async (id, invoiceNumber = 'Document') => {
     const token = localStorage.getItem('hao_token');
-    const response = await fetch(`/api/invoices/${id}/pdf`, {
+    const response = await fetch(`${API_BASE}/invoices/${id}/pdf`, {
       headers: {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       credentials: 'include',
     });
     if (!response.ok) {
-      const errJson = await response.json().catch(() => null);
-      throw new Error(errJson?.message || 'Failed to download Invoice PDF');
+      let errMsg = 'Failed to download Invoice PDF';
+      try {
+        const errJson = await response.json();
+        errMsg = errJson?.message || errMsg;
+      } catch (e) {
+        const text = await response.text();
+        errMsg = text || errMsg;
+      }
+      throw new Error(errMsg);
     }
     const blob = await response.blob();
     const url = window.URL.createObjectURL(blob);
